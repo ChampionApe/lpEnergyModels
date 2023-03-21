@@ -1,296 +1,175 @@
-import database
-from _mixedTools import *
-from subsetPandas import rc_pd
 from functools import reduce
+from base import *
+_blocks = ('c','l','u','b_eq','b_ub','A_eq','A_ub')
 _stdLinProg = ('c', 'A_ub','b_ub','A_eq','b_eq','bounds')
-
-def emptyArrayIfEmpty(x):
-	return [np.hstack(x)] if x else [np.array([])]
-
-def noneInitList(x,FallBackVal):
-	return FallBackVal if x is None else [x]
-
-def stdNames(k):
-	if isinstance(k,str):
-		return [f"_{k}symbol", f"_{k}index"]
-	else:
-		return [n for l in [stdNames(i) for i in k] for n in l]
-
-def getDomains(x):
-	return [] if database.getIndex(x) is None else database.getIndex(x).names
-
-def sortAll(v, order=None):
-	return reorderStd(v, order=order).sort_index() if isinstance(v, (pd.Series, pd.DataFrame)) else v
-
-def reorderStd(v, order=None):
-	return v.reorder_levels(noneInit(order, sorted(database.getIndex(v).names))) if isinstance(database.getIndex(v), pd.MultiIndex) else v
-
-# 1: Broadcasting:
-def broadcast(x,y,fill_value=0):
-	""" y is a index or None, x is a scalar or series."""
-	if getDomains(y):
-		if not getDomains(x):
-			return pd.Series(x, index = y)
-		elif set(getDomains(x)).intersection(set(getDomains(y))):
-			# return pd.merge(x.to_frame('x'), pd.Series(index = y, dtype='object',name='x'), left_index = True, right_index = True, how = 'left')['x_x']
-			if set(getDomains(x))-set(getDomains(y)):
-				return x.add(pd.Series(0, index = y), fill_value=fill_value)
-			else:
-				return pd.Series(0, index=y).add(x,fill_value=fill_value)
-		else:
-			return pd.Series(0, index = cartesianProductIndex([database.getIndex(x),y])).add(x,fill_value=fill_value)
-	else:
-		return x
-def adHocMerge(x,y):
-	return pd.merge(x.rename('x'), pd.Series(0, index = y).rename('y'), left_index = True, right_index = True).dropna().sum(axis=1)
-
-def bcAdd(x,y,fill_value=0):
-	""" Use broadcasting to robustly add two variables, including if the two are scalars. """
-	b = broadcast(x,database.getIndex(y),fill_value=fill_value)
-	return b.add(y, fill_value=fill_value) if isinstance(b,pd.Series) else x+y
-
-def asSeriesIfIndex(x,val = 0):
-	return pd.Series(val, index = x) if isinstance(x, pd.Index) else x
-
-# 2: GLOBAL INDEX METHODS
-def setattrReturn(symbol, k,v):
-	symbol.__setattr__(k,v)
-	return symbol
-
-def fIndex_Series(variableName, index, btype ='v'):
-	return setattrReturn(pd.MultiIndex.from_product([[variableName],reorderStd(index).values], names=stdNames(btype)), '_n', sorted(index.names))
-
-def fIndex(variableName, index, btype = 'v'):
-	return setattrReturn(pd.MultiIndex.from_tuples([(variableName,None)], names = stdNames(btype)), '_n', []) if index is None else fIndex_Series(variableName,index, btype = btype)
-
-def fIndexVariable(variableName, v, btype = 'v'):
-	return pd.Series(database.getValues(v), index = fIndex(variableName, database.getIndex(v), btype = btype))
-
-def vIndex_Series(f,names):
-	return f.index.set_names(names) if len(names)==1 else pd.MultiIndex.from_tuples(f.index.values,names=names)
-
-def vIndexVariable(f, variable, names):
-	return pd.Series(f.xs(variable).values, index = vIndex_Series(f.xs(variable),names)) if names else f.xs(variable)[0]
-
-def vIndexSymbol_dual(f, symbol, names):
-	keep = f.xs(symbol)
-	return pd.Series(keep.values, index = pd.MultiIndex.from_frame(vIndex_Series(keep.droplevel('_type'), names).to_frame(index=False).assign(_type=keep.index.get_level_values('_type')))) if names else keep.droplevel('_sindex')
-
-# 3: Methods on iterator of symbols
-def sumIte(ite,fill_value=0):
-	""" Sum using broadcasting methods on iterative object """
-	return reduce(lambda x,y: bcAdd(x,y,fill_value=fill_value), ite)
-
-def maxIte(ite):
-	""" Returns max of symbols in ite; ignores NaN unless all columns use it. """
-	return pd.concat(ite, axis=1).max(axis=1) if isinstance(ite[0], pd.Series) else max([noneInit(x,np.nan) for x in ite])
-
-def minIte(ite):
-	return pd.concat(ite, axis=1).min(axis=1) if isinstance(ite[0], pd.Series) else min([noneInit(x,np.nan) for x in ite])
-
-def stackValues(ite):
-	return np.hstack([f.values for f in ite])
-
-def stackIndex(ite,names):
-	return pd.MultiIndex.from_tuples(np.hstack([f.index.values for f in ite]), names = names)
-
-def stackSeries(ite, names):
-	return pd.Series(stackValues(ite), index = stackIndex(ite,names))
-
-def stackIte(varsDict,fill_value=0, btype = 'v', addFullIndex= True):
-	""" Returns stacked variable with global index"""
-	fvars = [fIndexVariable(k, varsDict[k]) for k in varsDict] if addFullIndex else varsDict.values()
-	return stackSeries(fvars, names = stdNames(btype))
 
 class lpBlock:
 	def __init__(self, globalDomains=None, **kwargs):
 		self.globalDomains=noneInit(globalDomains, {})
-		self.blocks = {k: ifinInit(k,kwargs,None) for k in ('c','eq','ub','u','l')}
-		self.parameters = {}
-		self.compiled = {}
-		self.broadcasted = {}
+		self.parameters = {k: {} for k in _blocks}
+		self.compiled = {k: {} for k in _blocks}
+		self.denseArgs = dict.fromkeys(_blocks)
+		self.gIndex = {}
 
-	def get(self, item, attr='parameters'):
-		return getattr(self,attr)[item]
-
-	def set(self, item, value, attr='parameters'):
-		getattr(self,attr)[item] = value
-
-	def getIte(self, k, par = None, var = None, constr = None, attr = 'parameters'):
-		""" return generator of types k (block type), var (variable type), constr (constraint type). """
-		if k in ('c','l','u'):
-			return (v for kk,v in getattr(self,attr).items() if (kk[0] == k) and (kk[1] in noneInitList(var, self.getVariables(attr=attr))))
-		elif k in ('eq','ub'):
-			if par == 'b':
-				return (v for kk,v in getattr(self,attr).items() if (kk[0:2] == (k,par)) and (kk[-1] in noneInitList(constr, self.getConstraints(k))))
-			elif par == 'A':
-				return (v for kk,v in getattr(self,attr).items() if (kk[0:2] == (k,par)) and (kk[3] in noneInitList(var, self.getVariables(attr=attr))) and (kk[2] in noneInitList(constr, self.getConstraints(k))))
-		elif is_iterable(k) and par is None:
-			return (v for kk,v in getattr(self,attr).items() if (kk[0] in k) and (kk[1] in noneInitList(var, self.getVariables(attr=attr))))
-		elif is_iterable(k) and par == 'b':
-			return (v for kk,v in getattr(self,attr).items() if (kk[0] in k and kk[1] == par) and (kk[-1] in noneInitList(constr, self.getConstraints(k))))
-		elif is_iterable(k) and par == 'A':
-			return (v for kk,v in getattr(self,attr).items() if (kk[0] in k and kk[1] == par) and (kk[3] in noneInitList(var,self.getVariables(attr=attr))) and (kk[2] in noneInitList(constr, self.getConstraints(k))))
-		else:
-			raise KeyError(f"Invalid combination of k = {k} and par = {par}.")
-
-	def __getitem__(self,item):
-		return self.blocks[item]
-
-	def __setitem__(self, item, value):
-		self.blocks[item] = value
-
-	def readConstraintsFromBlocks_A(self,t):
-		return set([k['constrName'] for k in self[t] if 'A' in k])
-	def getConstraints(self, t):
-		return set([k[-1] for k in  self.parameters if k[0:2] == (t,'b')]) if not is_iterable(t) else set([k[-1] for k in self.parameters if (k[0] in t) and (k[1] == 'b')])
-	def getVariables(self, attr = 'parameters'):
-		return set([k[-1] for k in  getattr(self,attr) if (k[0] == 'c') or (k[0] in ('eq','ub') and k[1] == 'A')])
-	def getVariables_t(self, t, attr = 'parameters'):
-		return set([k[-1] for k in getattr(self,attr) if (k[0] == t)])
-	def getVariables_i(self, t, constr, attr = 'parameters'):
-		return set([k[-1] for k in  getattr(self,attr) if (k[0:2] == (t,'A')) and (k[2] == constr)])
-
-	# 0: Methods:
-	def readParameters(self):
-		if self['c'] is not None:
-			[self.set(('c',k), v) for k,v in self.coefficient(self['c']).items()];
-		if self['eq'] is not None:
-			[self.set(('eq','b',k), v) for k,v in self.coefficient([i for i in self['eq'] if 'b' in i],name='constrName',pname='b').items()];
-			[self.set(('eq','A',k,kk), v) for k in self.readConstraintsFromBlocks_A('eq') for kk,v in self.readAconstr_i('eq',k).items()];
-		if self['ub'] is not None:
-			[self.set(('ub','b',k), v) for k,v in self.coefficient([i for i in self['ub'] if 'b' in i],name='constrName',pname='b').items()];
-			[self.set(('ub','A',k,kk), v) for k in self.readConstraintsFromBlocks_A('ub') for kk,v in self.readAconstr_i('ub',k).items()];
-		if self['u'] is not None:
-			[self.set(('u',k), v) for k,v in self.coefficientMin(self['u']).items()];
-		if self['l'] is not None:
-			[self.set(('l',k), v) for k,v in self.coefficientMax(self['l']).items()];
-
-	def readAconstr_i(self, t, constr):
-		blocks = [self.coefficient(i['A']) for i in self[t] if ('A' in i) and (i['constrName'] == constr)];
-		return {kk: sumIte((v for b in blocks for k,v in b.items() if k == kk)) for kk in set.union(*[set(b) for b in blocks])}
-
-	# 1: Simple Coefficient Block:
-	def coefficient(self, blocks, name = 'variableName', pname = 'parameter'):
-		return {k: sumIte((self.c_readdict(d, name = name, pname = pname) for d in blocks if d[name] == k)) for k in set([x[name] for x in blocks])}
-
-	def coefficientMax(self, blocks, name = 'variableName', pname = 'parameter', defaultValue = 0):
-		return {k: maxIte([self.c_readdict(d, name = name, pname = pname, defaultValue=defaultValue) for d in blocks if d[name] == k]) for k in set([x[name] for x in blocks])}
-
-	def coefficientMin(self, blocks, name = 'variableName', pname = 'parameter', defaultValue = None):
-		return {k: minIte([self.c_readdict(d, name = name, pname = pname, defaultValue=defaultValue) for d in blocks if d[name] == k]) for k in set([x[name] for x in blocks])}
-
-	def c_readdict(self, d, name = 'variableName', pname = 'parameter', defaultValue=0):
-		return rc_pd(self.checkGD(d[name], d[pname],defaultValue=defaultValue), c = None if 'conditions' not in d else d['conditions'])
-
-	def checkGD(self, key, value, defaultValue = 0):
-		if key in self.globalDomains and not isinstance(value, pd.Series):
-			return pd.Series(noneInit(value, defaultValue), index = self.globalDomains[key])
+	def checkGlobalDomains(self, key, value, defaultValue = 0, conditions=None):
+		if key in self.globalDomains:
+			return adj.rc_pd(pd.Series(noneInit(value, defaultValue), index = self.globalDomains[key]), c = conditions)
 		else:
 			return noneInit(value, defaultValue)
 
-	# 2: Map variables to full index:
-	def compileParameters(self):
-		[self.set((t, v), fIndexVariable(v, self.get((t,v))),attr='compiled') for t in ('c','l','u') for v in self.getVariables_t(t)];
-		[self.set((t,'b',constr), fIndexVariable(constr, self.get((t,'b',constr)),btype=t).sort_index(), attr='compiled') for t in ('eq','ub') for constr in self.getConstraints(t)];
-		[self.set(('eq','A',constr,v),self.fIndexVariable_Ai('eq',v,constr,self.get(('eq','A',constr,v)), self.get(('eq','b',constr))),attr='compiled') for constr in self.getConstraints('eq') for v in self.getVariables_i('eq',constr)];
-		[self.set(('ub','A',constr,v),self.fIndexVariable_Ai('ub',v,constr,self.get(('ub','A',constr,v)), self.get(('ub','b',constr))),attr='compiled') for constr in self.getConstraints('ub') for v in self.getVariables_i('ub',constr)];
-
-	def fIndexVariable_Ai(self, t, v, constr, Ai, b):
-		overlap = set(getDomains(Ai)).intersection(getDomains(b))
-		onlyA = set(getDomains(Ai))-overlap
-		if not overlap:
-			full = broadcast(fIndexVariable(v,Ai), fIndex(constr, database.getIndex(b), btype=t))
+	def addVector(self, t, func, component, value, name = None, conditions = None):
+		if isinstance(value, pd.Series):
+			self.parameters[t][(name, component)] = adj.rc_pd(value, c = conditions)
+		elif isinstance(value, (int,float,np.generic, type(None))):
+			self.parameters[t][(name, component)] =  self.checkGlobalDomains(name, value, conditions=conditions)
+		elif is_iterable(value):
+			self.parameters[t][(name, component)] = adj.rc_pd(func(value), c = conditions)
 		else:
-			full = broadcast(Ai, database.getIndex(b))
+			raise TypeError(f"The argument '({name}, {component})' added to {t}-blocks should be of type pd.Series, scalar, or an iterable object.")
+
+	def addVectorConstraint(self, t, func, value, name = None, conditions = None):
+		if isinstance(value, pd.Series):
+			self.parameters[t][name] = adj.rc_pd(value, c = conditions)
+		elif isinstance(value, (int,float,np.generic, type(None))):
+			self.parameters[t][name] =  self.checkGlobalDomains(name, value, conditions = conditions)
+		elif is_iterable(value):
+			self.parameters[t][name] = adj.rc_pd(func(value), c = conditions)
+		else:
+			raise TypeError(f"The argument '{name}' added to {t}-blocks should be of type pd.Series, scalar, or an iterable object.")
+
+	def addMatrix(self, t, component, value, varName = None, constrName = None, conditions=None):
+		if isinstance(value, pd.Series):
+			self.parameters[t][(constrName, varName, component)] = adj.rc_pd(value, c = conditions)
+		elif isinstance(value, (int, float, np.generic, type(None))):
+			self.parameters[t][(constrName, varName, component)] = adjMultiIndex.bcAdd(self.checkGlobalDomains(constrName, value, conditions = conditions), self.checkGlobalDomains(varName, 0, conditions=conditions))
+		elif is_iterable(value):
+			self.parameters[t][(constrName, varName, component)] = adj.rc_pd(sumIte(value), c = conditions)
+		else:
+			raise TypeError(f"The argument '({varName}, {constrName}, {component})' added to {t}-blocks should be of type pd.Series, scalar, or an iterable object.")
+
+	def add_c(self, component=None, value = None, varName = None, conditions=None):
+		self.addVector('c',sumIte,component, value, name = varName, conditions=conditions)
+
+	def add_l(self, component=None, value = None, varName = None, conditions=None):
+		self.addVector('l',maxIte,component, value, name = varName, conditions=conditions)
+
+	def add_u(self, component=None, value = None, varName = None, conditions=None):
+		self.addVector('u',minIte,component, value, name = varName, conditions=conditions)
+
+	def add_b_eq(self, value = None, constrName = None, conditions=None):
+		self.addVectorConstraint('b_eq',sumIte, value, name = constrName, conditions=conditions)
+
+	def add_b_ub(self, value = None, constrName = None, conditions=None):
+		self.addVectorConstraint('b_ub',sumIte, value, name = constrName, conditions=conditions)
+
+	def add_A_eq(self, component = None, value = None, varName = None, constrName = None, conditions=None):
+		self.addMatrix('A_eq', component, value, varName = varName, constrName = constrName, conditions=conditions)
+
+	def add_A_ub(self, component = None, value = None, varName = None, constrName = None, conditions=None):
+		self.addMatrix('A_ub', component, value, varName = varName, constrName = constrName, conditions=conditions)
+
+	def compileVector(self, t, func, name, checkTupleIndex = 0):
+		self.compiled[t][name] = fIndexVariable(name, func([v for k,v in self.parameters[t].items() if k[checkTupleIndex] == name]))
+	def compileVectorConstraint(self, t, name, btype):
+		self.compiled[t][name] = fIndexVariable(name, self.parameters[t][name], btype = btype)
+	def compileMatrix(self, t, constrName, varName):
+		A, b = sumIte([v for k,v in self.parameters[f'A_{t}'].items() if k[0:2] == (constrName, varName)]), self.parameters[f'b_{t}'][constrName]
+		overlap = set(pyDatabases.getDomains(A)).intersection(pyDatabases.getDomains(b))
+		onlyA = set(pyDatabases.getDomains(A))-overlap
+		if not overlap:
+			full = adjMultiIndex.bc(fIndexVariable(varName, A), fIndex(constrName, pyDatabases.getIndex(b), btype=t))
+		else:
+			full = adjMultiIndex.bc(A, pyDatabases.getIndex(b))
 			if not onlyA:
-				full.index = cartesianProductIndex([fIndex(v, None), fIndex(constr, full.index, btype=t)])
+				full.index = pyDatabases.cartesianProductIndex([fIndex(varName, None), fIndex(constrName, full.index, btype=t)])
 			else:
-				f1, f2 = fIndex(v, full.index.droplevel(list(set(getDomains(Ai))-onlyA)) ), fIndex(constr, full.index.droplevel(list(onlyA)), btype=t)
+				f1, f2 = fIndex(varName, full.index.droplevel(list(set(pyDatabases.getDomains(A))-onlyA)) ), fIndex(constrName, full.index.droplevel(list(onlyA)), btype=t)
 				full.index = pd.MultiIndex.from_arrays(np.concatenate([f1.to_frame(index=False).values, f2.to_frame(index=False)], axis=1).T, names = stdNames('v')+stdNames(t))
-		full.index._nA, full.index._nb = sorted(onlyA), sorted(getDomains(b))
-		return full
+		full.index._nA, full.index._nb = sorted(onlyA), sorted(pyDatabases.getDomains(b))
+		self.compiled[f'A_{t}'][(constrName, varName)] = full
 
-	# 3: Infer global index from compiled parameters
-	def inferGlobalDomains(self):
-		self.gIndex = {k: fIndex(k, self.domains_var(k)) for k in self.getVariables(attr='compiled')}
-		return self.gIndex
+	def compileParameters(self):
+		[self.compileVector('c', sumIte, name) for name in set([n[0] for n in self.parameters['c']])];
+		[self.compileVector('l', maxIte, name) for name in set([n[0] for n in self.parameters['l']])];
+		[self.compileVector('u', minIte, name) for name in set([n[0] for n in self.parameters['u']])];
+		[self.compileVectorConstraint(f'b_{t}', name, btype = t) for t in ('eq','ub') for name in self.parameters[f'b_{t}']];
+		[self.compileMatrix(t, tup[0], tup[1]) for t in ('eq','ub') for tup in set([k[0:2] for k in self.parameters[f'A_{t}']])];
+	
+	def settingsFromCompiled(self):
+		self.allvars = sorted(self.getVariables)
+		self.allconstr = {t: sorted(self.compiled[f'b_{t}']) for t in ('eq','ub')}
+		self.alldomains = ( {k:v.index._n for k,v in reduce(lambda x,y: x|y, [self.compiled[k] for k in ('c','l','u')]).items()} | 
+							{k[1]: v.index._nA for k,v in self.compiled['A_eq'].items()} |
+							{k[1]: v.index._nA for k,v in self.compiled['A_ub'].items()} )
+		self.allconstrdomains = {k: self.compiled[f'b_{t}'][k].index._n for t in ('eq','ub') for k in self.allconstr[t]}
 
-	def readIndexNames(self, k):
-		try:
-			return next(self.getIte(('c','l','u'),var=k,attr='compiled')).index._n
-		except StopIteration:
-			return next(self.getIte(('eq','ub'),par='A',var=k,attr='compiled')).index._nA
+	@property
+	def getVariables(self):
+		return set([k[1] for l in [self.compiled['A_eq'],self.compiled['A_ub']] for k in l]).union(set.union(*[set(self.compiled[k]) for k in ('c','l','u')]))
 
-	def readConstrIndexNames(self, k):
-		return next(self.getIte(('eq','ub'), par='A', constr=k ,attr='compiled')).index._nb
-		
-	def domains_var(self, k):
-		index = reduce(pd.Index.union, [self.get((t,k),attr='compiled').index.levels[1] for t in ('c','u','l') if (t,k) in self.compiled]+[s.index.levels[1] for s in self.getIte('eq',par='A',var=k,attr='compiled')]+[s.index.levels[1] for s in self.getIte('ub',par='A',var=k,attr='compiled')])
+	def variableDomains(self, k):
+		index = reduce(pd.Index.union, ([self.compiled[t][k].index.levels[1] for t in ('c','l','u') if k in self.compiled[t]]+[self.compiled[t][v].index.levels[1] for t in ('A_eq','A_ub') for v in self.compiled[t] if v[1] == k]))
 		return None if index.empty else index
 
-	# 4: Broadcast and sort variables to full domain:
-	def settingsFromCompiled(self):
-		self.allvars = sorted(self.getVariables(attr='compiled'))
-		self.allconstr = {t: sorted(self.getConstraints(t)) for t in ('eq','ub')}
-		self.alldomains = {k: self.readIndexNames(k) for k in self.allvars}
-		self.allconstrdomains = {k: self.readConstrIndexNames(k) for k in self.allconstr['eq']+self.allconstr['ub']}
+	# Infer global index from compiled parameters
+	def inferGlobalDomains(self):
+		self.gIndex = {k: fIndex(k, self.variableDomains(k)) for k in self.allvars}
+		self.globalVariableIndex = stackIndex(self.gIndex.values(), names = stdNames('v'))
+		self.globalConstraintIndex = {t: stackIndex([self.compiled[f'b_{t}'][k] for k in self.allconstr[t]], names = stdNames(t)) if self.compiled[f'b_{t}'] else None for t in ('eq','ub')}
+		self.globalMaps = ({'v': pd.Series(range(len(self.globalVariableIndex)), index = self.globalVariableIndex)} | 
+							{t: pd.Series(range(len(self.globalConstraintIndex[t])), index = self.globalConstraintIndex[t]) if self.compiled[f'b_{t}'] else None for t in ('eq','ub')}
+						)
 
-	def broadcastAndSort(self):
-		[self.set((t,k), self.broadcastAndSort_i(t,k),attr='broadcasted') for t in ('c','l') for k in self.allvars];
-		[self.set(('u',k), self.broadcastAndSort_i('u',k,val=None), attr='broadcasted') for k in self.allvars];
-		[self.set((t,'A',constr,k), self.broadcastAndSort_Ai(t,constr,k,self.get((t,'b',constr),attr='compiled').index), attr='broadcasted') for t in ('eq','ub') for constr in self.allconstr[t] for k in self.allvars];
+	def getDenseArgs(self):
+		""" NOTE: Vectors are broadcasted """
+		[self.denseArgs.__setitem__(t, stackSeries([self.broadcastAndSort_i(t,k,defaultValue=0) for k in self.allvars], names = stdNames('v'))) for t in ('c','l')];
+		[self.denseArgs.__setitem__('u', stackSeries([self.broadcastAndSort_i('u',k,defaultValue=None) for k in self.allvars], names = stdNames('v')))];
+		[self.denseArgs.__setitem__(f'b_{t}', stackSeries([self.compiled[f'b_{t}'][k] for k in self.allconstr[t]], names = stdNames(t)) if self.allconstr[t] else None) for t in ('eq','ub')];
+		[self.denseArgs.__setitem__(f'A_{t}', self.getDenseA(t) if self.allconstr[t] else None) for t in ('eq','ub')];
 
-	def broadcastAndSort_i(self, t, k, val=0):
-		return broadcast(self.get((t,k),attr='compiled') if k in self.getVariables_t(t,attr='compiled') else val, self.gIndex[k], fill_value = val).sort_index()
+	def getDenseA(self, t):
+		return stackSeries([self.compiled[f'A_{t}'][(constr,var)] for var in self.allvars for constr in self.allconstr[t] if (constr,var) in self.compiled[f'A_{t}']], names = stdNames('v')+stdNames(t))
+	def columnIndexFromA(self, Avector, t):
+		return Avector.droplevel(stdNames(t)).index.map(self.globalMaps['v'])
+	def rowIndexFromA(self, Avector, t):
+		return Avector.droplevel(stdNames('v')).index.map(self.globalMaps[t])
+	def broadcastAndSort_i(self, t, k, defaultValue = 0):
+		return adjMultiIndex.bc(self.compiled[t][k] if k in self.compiled[t] else defaultValue, self.gIndex[k], fill_value = defaultValue).sort_index()
 
-	def broadcastAndSort_Ai(self,t,constr,k,bindex):
-		if k in self.getVariables_i(t,constr,attr='compiled'):
-			return sparseDF(self.gIndex[k], bindex.get_level_values(f'_{t}index')).add(self.get((t,'A',constr,k),attr='compiled').droplevel(f'_{t}symbol').unstack(level=-1).fillna(0), fill_value=0)
-		else:
-			return sparseDF(self.gIndex[k], bindex.get_level_values(f'_{t}index'))
-
-	# def broadcastAndSort_Ai(self,t,constr,k,bindex):
-	# 	if k in self.getVariables_i(t,constr,attr='compiled'):
-	# 		return pd.DataFrame(0, index = self.gIndex[k], columns = bindex.get_level_values(f'_{t}index')).add(self.get((t,'A',constr,k),attr='compiled').droplevel(f'_{t}symbol').unstack(level=-1).fillna(0), fill_value=0)
-	# 	else:
-	# 		return pd.DataFrame(0, index = self.gIndex[k], columns = bindex.get_level_values(f'_{t}index'))
 
 	# 5: Methods to get the stacked numpy arrays:
 	def __call__(self, execute=None):
-		[getattr(self, k)() for k in noneInit(execute, ['readParameters','compileParameters','settingsFromCompiled','inferGlobalDomains','broadcastAndSort'])];
+		[getattr(self, k)() for k in noneInit(execute, ['compileParameters','settingsFromCompiled','inferGlobalDomains','getDenseArgs'])];
 		return self.lp_args
 
 	@property
 	def lp_args(self):
 		return {k: getattr(self, 'lp_'+k) for k in _stdLinProg}
 	@property
-	def lp_solutionIndex(self):
-		return stackIndex([self.get(('c',k),attr='broadcasted') for k in self.allvars], names = stdNames('v'))
-	@property
 	def lp_c(self):
-		return stackValues([self.get(('c',k),attr='broadcasted') for k in self.allvars])
+		return self.denseArgs['c'].values
 	@property
 	def lp_l(self): 
-		return stackValues([self.get(('l',k),attr='broadcasted') for k in self.allvars])
+		return self.denseArgs['l'].values
 	@property
 	def lp_u(self): 
-		return stackValues([self.get(('u',k),attr='broadcasted') for k in self.allvars])
+		return self.denseArgs['u'].values
 	@property
 	def lp_bounds(self):
 		return np.vstack([self.lp_l, self.lp_u]).T
 	@property
 	def lp_A_eq(self):
-		return np.hstack([np.vstack([self.get(('eq','A',constr,k),attr='broadcasted').values for k in self.allvars]) for constr in self.allconstr['eq']]).T if self.allconstr['eq'] else None
+		return sparse.coo_matrix((self.denseArgs['A_eq'].values, (self.rowIndexFromA(self.denseArgs['A_eq'],'eq'), self.columnIndexFromA(self.denseArgs['A_eq'],'eq'))), shape = (len(self.globalConstraintIndex['eq']), len(self.globalVariableIndex))) if self.allconstr['eq'] else None
 	@property
 	def lp_A_ub(self):
-		return np.hstack([np.vstack([self.get(('ub','A',constr,k),attr='broadcasted').values for k in self.allvars]) for constr in self.allconstr['ub']]).T if self.allconstr['ub'] else None
+		return sparse.coo_matrix((self.denseArgs['A_ub'].values, (self.rowIndexFromA(self.denseArgs['A_ub'],'ub'), self.columnIndexFromA(self.denseArgs['A_ub'],'ub'))), shape = (len(self.globalConstraintIndex['ub']), len(self.globalVariableIndex))) if self.allconstr['ub'] else None
 	@property
 	def lp_b_eq(self):
-		return stackValues([self.get(('eq','b',k),attr='compiled') for k in self.allconstr['eq']]) if self.allconstr['eq'] else None
+		return self.denseArgs['b_eq'].values if self.allconstr['eq'] else None
 	@property
 	def lp_b_ub(self):
-		return stackValues([self.get(('ub','b',k),attr='compiled') for k in self.allconstr['ub']]) if self.allconstr['ub'] else None
+		return self.denseArgs['b_ub'].values if self.allconstr['ub'] else None
+
 
 	# CHECKING LOWER/UPPER BOUNDS: Returns index where lower and upper bounds are equal.
 	# In these instances, the solver does not distinguish between the two, and may ascribe the dual variable to either.
@@ -301,23 +180,25 @@ class lpBlock:
 	def scalarDualUpper(self, sol):
 		return np.where(self.lp_bounds[:,0]==self.lp_bounds[:,1], np.add(sol['lower']['marginals'], sol['upper']['marginals']), sol['upper']['marginals'])
 
-	# Get dual solutions:
-	def dual_solution(self, sol, scalarDual = True):
-		return pd.Series(self.dual_solutionValues(sol, scalarDual=scalarDual), index = self.dual_solutionIndex)
+	# # Get dual solutions:
+	# def dual_solution(self, sol, scalarDual = True):
+	# 	return pd.Series(self.dual_solutionValues(sol, scalarDual=scalarDual), index = self.dual_solutionIndex)
 
 	@property
-	def dual_solutionIndex(self):
-		ite = ( emptyArrayIfEmpty([self.get(('eq','b',k),attr='compiled').index.values for k in self.allconstr['eq']])+
-				emptyArrayIfEmpty([self.get(('ub','b',k),attr='compiled').index.values for k in self.allconstr['ub']])+
-				[self.lp_solutionIndex.values]+
-				[self.lp_solutionIndex.values])
-		return pd.MultiIndex.from_frame(pd.MultiIndex.from_tuples(np.hstack(ite), names = stdNames('s')).to_frame(index=False).assign(_type=self.typeVector(ite)))
+	def dualIndex(self):
+		lenNone = lambda x: 0 if x is None else len(x)
+		ite = (self.globalConstraintIndex['eq'], self.globalConstraintIndex['ub'], self.globalVariableIndex, self.globalVariableIndex)
+		return pd.MultiIndex.from_frame(
+				pd.MultiIndex.from_tuples(np.hstack([i.values for i in ite if i is not None]),
+											names = stdNames('s')).to_frame(index=False).assign(_type = np.hstack([['eq']*lenNone(ite[0]), ['ub']*lenNone(ite[1]), ['l']*len(ite[2]), ['u']*len(ite[3])]))
+				)
 
-	def typeVector(self, ite):
-		return np.hstack([['eq']*len(ite[0]), ['ub']*len(ite[1]), ['l']*len(ite[2]), ['u']*len(ite[3])])
-
-	def dual_solutionValues(self, sol, scalarDual = True):
+	def dualValues(self, sol, scalarDual=True):
 		if scalarDual:
 			return np.hstack([sol['eqlin']['marginals'], sol['ineqlin']['marginals'], self.scalarDualLower(sol), self.scalarDualUpper(sol)])
 		else:
 			return np.hstack([sol['eqlin']['marginals'], sol['ineqlin']['marginals'], sol['lower']['marginals'], sol['upper']['marginals']])
+
+	# Get dual solutions:
+	def dualSolution(self, sol, scalarDual = True):
+		return pd.Series(self.dualValues(sol, scalarDual=scalarDual), index = self.dualIndex)
