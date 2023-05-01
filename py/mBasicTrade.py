@@ -3,20 +3,20 @@ from lpCompiler import _blocks
 from lpModels import modelShell
 
 def fuelCost(db):
-	return db['FuelPrice'].add(pyDatabases.pdSum(db['EmissionIntensity'] * db['EmissionTax'], 'EmissionType'), fill_value=0)
+	return db['FuelPrice'].add(pydb.pdSum(db['EmissionIntensity'] * db['EmissionTax'], 'EmissionType'), fill_value=0)
 
 def mc(db):
 	""" Marginal costs in €/GJ """
-	return pyDatabases.pdSum((db['FuelMix'] * fuelCost(db)).dropna(), 'BFt').add(db['OtherMC'])
+	return pydb.pdSum((db['FuelMix'] * fuelCost(db)).dropna(), 'BFt').add(db['OtherMC'])
 
 def fuelConsumption(db):
-	return pyDatabases.pdSum((db['Generation'] * db['FuelMix']).dropna(), ['h','id'])
+	return pydb.pdSum((db['Generation'] * db['FuelMix']).dropna(), ['h','id'])
 
 def plantEmissionIntensity(db):
-	return pyDatabases.pdSum(db['FuelMix'] * db['EmissionIntensity'], 'BFt')
+	return pydb.pdSum(db['FuelMix'] * db['EmissionIntensity'], 'BFt')
 
 def emissionsFuel(db):
-	return pyDatabases.pdSum(fuelConsumption(db) * db['EmissionIntensity'], 'BFt')
+	return pydb.pdSum(fuelConsumption(db) * db['EmissionIntensity'], 'BFt')
 
 def fixedCosts(db):
 	""" fixed operating and maintenance costs of installed capacity in 1000€. """
@@ -24,7 +24,7 @@ def fixedCosts(db):
 
 def variableCosts(db):
 	""" short run costs in 1000€. """
-	return db['mc']*pyDatabases.pdSum(db['Generation'], 'h') / 1000
+	return db['mc']*pydb.pdSum(db['Generation'], 'h') / 1000
 
 def totalCosts(db):
 	""" total electricity generating costs in 1000€ """
@@ -34,19 +34,19 @@ def averageCapacityCosts(db):
 	return (1000 * totalCosts(db) / pdNonZero(db['GeneratingCapacity'])).droplevel('g')
 
 def averageEnergyCosts(db):
-	return (1000 * totalCosts(db) / pdNonZero(pyDatabases.pdSum(db['Generation'], 'h'))).droplevel('g')
+	return (1000 * totalCosts(db) / pdNonZero(pydb.pdSum(db['Generation'], 'h'))).droplevel('g')
 
 def theoreticalCapacityFactor(db):
-	return pyDatabases.pdSum( (db['Generation']/pdNonZero(len(db['h']) * db['GeneratingCapacity'])).dropna(), 'h').droplevel('g')
+	return pydb.pdSum( (db['Generation']/pdNonZero(len(db['h']) * db['GeneratingCapacity'])).dropna(), 'h').droplevel('g')
 
 def practicalCapacityFactor(model):
-	return ( pyDatabases.pdSum(model.db['Generation'], 'h')/ pdNonZero(pyDatabases.pdSum(model.hourlyGeneratingCapacity, 'h')) ).dropna().droplevel('g')
+	return ( pydb.pdSum(model.db['Generation'], 'h')/ pdNonZero(pydb.pdSum(model.hourlyGeneratingCapacity, 'h')) ).dropna().droplevel('g')
 
 def marginalSystemCosts(db):
 	return adj.rc_pd(db['λ_equilibrium'], alias={'h_alias':'h', 'g_alias2': 'g'}).droplevel('_type')
 
 def meanMarginalSystemCost(db, var):
-	return pyDatabases.pdSum( (var * marginalSystemCosts(db)) / pdNonZero(pyDatabases.pdSum(var, 'h')), 'h')
+	return pydb.pdSum( (var * marginalSystemCosts(db)) / pdNonZero(pydb.pdSum(var, 'h')), 'h')
 
 def downlift(db):
 	return meanMarginalSystemCost(db, db['HourlyDemand']) - meanMarginalSystemCost(db, db['Generation'])
@@ -54,10 +54,10 @@ def downlift(db):
 def marginalEconomicRevenue(model):
 	ϑ = model.db['λ_Generation'].xs('u', level = '_type')
 	ϑ = ϑ[ϑ!=0]
-	return pyDatabases.pdSum(marginalSystemCosts(model.db) * adj.rc_pd(model.hourlyCapFactors, ϑ), 'h')
+	return pydb.pdSum(marginalSystemCosts(model.db) * adj.rc_pd(model.hourlyCapFactors, ϑ), 'h')
 
 def marginalEconomicValue(model):
-	return (- pyDatabases.pdSum(model.db['λ_Generation'].xs('u',level='_type') * model.hourlyCapFactors, 'h').add( 1000 * model.db['FOM'] * len(model.db['h'])/8760, fill_value = 0)).droplevel('g')
+	return (- pydb.pdSum(model.db['λ_Generation'].xs('u',level='_type') * model.hourlyCapFactors, 'h').add( 1000 * model.db['FOM'] * len(model.db['h'])/8760, fill_value = 0)).droplevel('g')
 
 def priceDifferences(db):
 	pe = adj.rc_pd(db['marginalSystemCosts'], db['Transmission'].index.droplevel('g_alias'))
@@ -86,7 +86,7 @@ class mSimple(modelShell):
 
 	@property
 	def hourlyLoad(self):
-		return pyDatabases.pdSum(self.hourlyLoad_c, 'c')
+		return pydb.pdSum(self.hourlyLoad_c, 'c')
 
 	def preSolve(self, recomputeMC=False, **kwargs):
 		if ('mc' not in self.db.symbols) or recomputeMC:
@@ -94,10 +94,10 @@ class mSimple(modelShell):
 
 	@property
 	def globalDomains(self):
-		return {'Generation': pyDatabases.cartesianProductIndex([self.db['id2g'], self.db['h']]),
+		return {'Generation': pydb.cartesianProductIndex([self.db['id2g'], self.db['h']]),
 				'HourlyDemand': pd.MultiIndex.from_product([self.db['g'], self.db['h']]),
 				'equilibrium': pd.MultiIndex.from_product([self.db['g_alias2'], self.db['h_alias']]),
-				'Transmission': pyDatabases.cartesianProductIndex([self.db['gConnected'],self.db['h']])}
+				'Transmission': pydb.cartesianProductIndex([self.db['gConnected'],self.db['h']])}
 
 	def initBlocks(self, **kwargs):
 		[getattr(self.blocks, f'add_{t}')(**v) for t in _blocks if hasattr(self,t) for v in getattr(self,t)];
@@ -143,7 +143,7 @@ class mEmissionCap(mSimple):
 
 	@property
 	def b_ub(self):
-		return [{'constrName': 'emissionsCap', 'value': pyDatabases.pdSum(self.db['CO2Cap'], 'g') if self.commonCap else adj.rc_pd(self.db['CO2Cap'], alias = {'g':'g_alias'})}]
+		return [{'constrName': 'emissionsCap', 'value': pydb.pdSum(self.db['CO2Cap'], 'g') if self.commonCap else adj.rc_pd(self.db['CO2Cap'], alias = {'g':'g_alias'})}]
 
 	@property
 	def A_ub(self):

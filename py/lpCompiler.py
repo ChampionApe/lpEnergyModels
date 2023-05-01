@@ -74,18 +74,18 @@ class lpBlock:
 		self.compiled[t][name] = fIndexVariable(name, self.parameters[t][name], btype = btype)
 	def compileMatrix(self, t, constrName, varName):
 		A, b = sumIte([v for k,v in self.parameters[f'A_{t}'].items() if k[0:2] == (constrName, varName)]), self.parameters[f'b_{t}'][constrName]
-		overlap = set(pyDatabases.getDomains(A)).intersection(pyDatabases.getDomains(b))
-		onlyA = set(pyDatabases.getDomains(A))-overlap
+		overlap = set(pydb.getDomains(A)).intersection(pydb.getDomains(b))
+		onlyA = set(pydb.getDomains(A))-overlap
 		if not overlap:
-			full = adjMultiIndex.bc(fIndexVariable(varName, A), fIndex(constrName, pyDatabases.getIndex(b), btype=t))
+			full = adjMultiIndex.bc(fIndexVariable(varName, A), fIndex(constrName, pydb.getIndex(b), btype=t))
 		else:
-			full = adjMultiIndex.bc(A, pyDatabases.getIndex(b))
+			full = adjMultiIndex.bc(A, pydb.getIndex(b))
 			if not onlyA:
-				full.index = pyDatabases.cartesianProductIndex([fIndex(varName, None), fIndex(constrName, full.index, btype=t)])
+				full.index = pydb.cartesianProductIndex([fIndex(varName, None), fIndex(constrName, full.index, btype=t)])
 			else:
-				f1, f2 = fIndex(varName, full.index.droplevel(list(set(pyDatabases.getDomains(A))-onlyA)) ), fIndex(constrName, full.index.droplevel(list(onlyA)), btype=t)
+				f1, f2 = fIndex(varName, full.index.droplevel(list(set(pydb.getDomains(A))-onlyA)) ), fIndex(constrName, full.index.droplevel(list(onlyA)), btype=t)
 				full.index = pd.MultiIndex.from_arrays(np.concatenate([f1.to_frame(index=False).values, f2.to_frame(index=False)], axis=1).T, names = stdNames('v')+stdNames(t))
-		full.index._nA, full.index._nb = sorted(onlyA), sorted(pyDatabases.getDomains(b))
+		full.index._nA, full.index._nb = sorted(onlyA), sorted(pydb.getDomains(b))
 		self.compiled[f'A_{t}'][(constrName, varName)] = full
 
 	def compileParameters(self):
