@@ -4,35 +4,35 @@ from lpModels import modelShell
 
 # Functions for all technology types:
 def fuelCost(db):
-	return db['FuelPrice'].add(pydb.pdSum(db['EmissionIntensity'] * db['EmissionTax'], 'EmissionType'), fill_value=0)
+	return db['FuelPrice'].add(pyDbs.pdSum(db['EmissionIntensity'] * db['EmissionTax'], 'EmissionType'), fill_value=0)
 
 def mc(db):
 	""" Marginal costs in €/GJ """
-	return pydb.pdSum((db['FuelMix'] * fuelCost(db)).dropna(), 'BFt').add(db['OtherMC'], fill_value=0)
+	return pyDbs.pdSum((db['FuelMix'] * fuelCost(db)).dropna(), 'BFt').add(db['OtherMC'], fill_value=0)
 
 def fuelConsumption(db):
-	return pydb.pdSum((db['FuelMix'] * (subsetIdsTech(db['Generation_E'], ('standard_E','BP'), db).add(
+	return pyDbs.pdSum((db['FuelMix'] * (subsetIdsTech(db['Generation_E'], ('standard_E','BP'), db).add(
 								  subsetIdsTech(db['Generation_H'], 'standard_H', db), fill_value = 0))).dropna(), ['h','id'])
 
 def plantEmissionIntensity(db):
-	return pydb.pdSum(db['FuelMix'] * db['EmissionIntensity'], 'BFt')
+	return pyDbs.pdSum(db['FuelMix'] * db['EmissionIntensity'], 'BFt')
 
 def emissionsFuel(db):
-	return pydb.pdSum(fuelConsumption(db) * db['EmissionIntensity'], 'BFt')
+	return pyDbs.pdSum(fuelConsumption(db) * db['EmissionIntensity'], 'BFt')
 
 def theoreticalCapacityFactor(db):
-	return pydb.pdSum((subsetIdsTech(db['Generation_E'], ('standard_E','BP'), db) / pdNonZero(len(db['h']) * db['GeneratingCap_E'])).dropna(), 'h').droplevel('g')
+	return pyDbs.pdSum((subsetIdsTech(db['Generation_E'], ('standard_E','BP'), db) / pdNonZero(len(db['h']) * db['GeneratingCap_E'])).dropna(), 'h').droplevel('g')
 
 def marginalSystemCosts(db,market):
 	return -adj.rc_AdjPd(db[f'λ_equilibrium_{market}'], alias={'h_alias':'h', 'g_alias2': 'g'}).droplevel('_type')
 
 def meanMarginalSystemCost(db, var, market):
-	return pydb.pdSum( (var * marginalSystemCosts(db,market)) / pdNonZero(pydb.pdSum(var, 'h')), 'h')
+	return pyDbs.pdSum( (var * marginalSystemCosts(db,market)) / pdNonZero(pyDbs.pdSum(var, 'h')), 'h')
 
 def marginalEconomicValue(m):
 	""" Defines over id """
-	return pd.Series.combine_first( subsetIdsTech(-pydb.pdSum((m.db['λ_Generation_E'].xs('u',level='_type')  * m.hourlyCapFactors).dropna(), 'h').add( 1000 * m.db['FOM'] * len(m.db['h'])/8760, fill_value = 0).droplevel('g'),('standard_E','BP'), m.db),
-									subsetIdsTech(-pydb.pdSum((m.db['λ_Generation_H'].xs('u',level='_type')  * m.hourlyCapFactors).dropna(), 'h').add( 1000 * m.db['FOM'] * len(m.db['h'])/8760, fill_value = 0).droplevel('g'),('standard_H','HP'), m.db)
+	return pd.Series.combine_first( subsetIdsTech(-pyDbs.pdSum((m.db['λ_Generation_E'].xs('u',level='_type')  * m.hourlyCapFactors).dropna(), 'h').add( 1000 * m.db['FOM'] * len(m.db['h'])/8760, fill_value = 0).droplevel('g'),('standard_E','BP'), m.db),
+									subsetIdsTech(-pyDbs.pdSum((m.db['λ_Generation_H'].xs('u',level='_type')  * m.hourlyCapFactors).dropna(), 'h').add( 1000 * m.db['FOM'] * len(m.db['h'])/8760, fill_value = 0).droplevel('g'),('standard_H','HP'), m.db)
 									)
 
 def getTechs(techs, db):
@@ -87,10 +87,10 @@ s		(4) intermittency in generation,
 		return adjMultiIndex.bc(self.db['Load_H'] * self.db['LoadVariation_H'], self.db['c_H2g']).reorder_levels(['c_H','g','h'])
 	@property
 	def hourlyLoad_E(self):
-		return pydb.pdSum(self.hourlyLoad_cE, 'c_E')
+		return pyDbs.pdSum(self.hourlyLoad_cE, 'c_E')
 	@property
 	def hourlyLoad_H(self):
-		return pydb.pdSum(self.hourlyLoad_cH, 'c_H')
+		return pyDbs.pdSum(self.hourlyLoad_cH, 'c_H')
 
 	def preSolve(self, recomputeMC=False, **kwargs):
 			if ('mc' not in self.db.symbols) or recomputeMC:
@@ -98,14 +98,14 @@ s		(4) intermittency in generation,
 
 	@property
 	def globalDomains(self):
-		return {'Generation_E': pydb.cartesianProductIndex([subsetIdsTech(self.db['id2g'], self.modelTech_E, self.db), self.db['h']]),
-				'Generation_H': pydb.cartesianProductIndex([subsetIdsTech(self.db['id2g'], self.modelTech_H, self.db), self.db['h']]),
-				'HourlyDemand_E': pydb.cartesianProductIndex([self.db['c_E2g'], self.db['h']]),
-				'HourlyDemand_H': pydb.cartesianProductIndex([self.db['c_H2g'], self.db['h']]),
-				'Transmission_E': pydb.cartesianProductIndex([self.db['gConnected'],self.db['h']]),
+		return {'Generation_E': pyDbs.cartesianProductIndex([subsetIdsTech(self.db['id2g'], self.modelTech_E, self.db), self.db['h']]),
+				'Generation_H': pyDbs.cartesianProductIndex([subsetIdsTech(self.db['id2g'], self.modelTech_H, self.db), self.db['h']]),
+				'HourlyDemand_E': pyDbs.cartesianProductIndex([self.db['c_E2g'], self.db['h']]),
+				'HourlyDemand_H': pyDbs.cartesianProductIndex([self.db['c_H2g'], self.db['h']]),
+				'Transmission_E': pyDbs.cartesianProductIndex([self.db['gConnected'],self.db['h']]),
 				'equilibrium_E': pd.MultiIndex.from_product([self.db['g_alias2'], self.db['h_alias']]),
 				'equilibrium_H': pd.MultiIndex.from_product([self.db['g_alias2'], self.db['h_alias']]),
-				'PowerToHeat': pydb.cartesianProductIndex([adj.rc_AdjPd(getTechs(['BP','HP'],self.db), alias = {'id':'id_alias'}), self.db['h_alias']])}
+				'PowerToHeat': pyDbs.cartesianProductIndex([adj.rc_AdjPd(getTechs(['BP','HP'],self.db), alias = {'id':'id_alias'}), self.db['h_alias']])}
 
 	def initBlocks(self, **kwargs):
 		[getattr(self.blocks, f'add_{t}')(**v) for t in _blocks if hasattr(self,t) for v in getattr(self,t)];
@@ -165,7 +165,7 @@ class mEmissionCap(mSimple):
 
 	@property
 	def b_ub(self):
-		return super().b_ub + [{'constrName': 'emissionsCap', 'value': pydb.pdSum(self.db['CO2Cap'],'g') if self.commonCap else adj.rc_pd(self.db['CO2Cap'], alias = {'g': 'g_alias'})}]
+		return super().b_ub + [{'constrName': 'emissionsCap', 'value': pyDbs.pdSum(self.db['CO2Cap'],'g') if self.commonCap else adj.rc_pd(self.db['CO2Cap'], alias = {'g': 'g_alias'})}]
 
 	@property
 	def A_ub(self):

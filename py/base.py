@@ -1,6 +1,6 @@
-import numpy as np, pandas as pd, pydb
+import numpy as np, pandas as pd, pyDbs
 from collections.abc import Iterable
-from pydb import adj, adjMultiIndex, noneInit
+from pyDbs import adj, adjMultiIndex, noneInit
 from six import string_types
 from scipy import sparse
 from functools import reduce
@@ -22,7 +22,7 @@ def sortAll(v, order=None):
 	return reorderStd(v, order=order).sort_index() if isinstance(v, (pd.Series, pd.DataFrame)) else v
 
 def reorderStd(v, order=None):
-	return v.reorder_levels(noneInit(order, sorted(pydb.getIndex(v).names))) if isinstance(pydb.getIndex(v), pd.MultiIndex) else v
+	return v.reorder_levels(noneInit(order, sorted(pyDbs.getIndex(v).names))) if isinstance(pyDbs.getIndex(v), pd.MultiIndex) else v
 
 def setattrReturn(symbol,k,v):
 	symbol.__setattr__(k,v)
@@ -35,7 +35,7 @@ def fIndex(variableName, index, btype = 'v'):
 	return setattrReturn(pd.MultiIndex.from_tuples([(variableName,None)], names = stdNames(btype)), '_n', []) if index is None else fIndexSeries(variableName,index, btype = btype)
 
 def fIndexVariable(variableName, v, btype = 'v'):
-	return v.set_axis(fIndex(variableName, pydb.getIndex(v), btype = btype)) if isinstance(v, pd.Series) else pd.Series(v, index = fIndex(variableName, None, btype=btype), dtype= np.float64)
+	return v.set_axis(fIndex(variableName, pyDbs.getIndex(v), btype = btype)) if isinstance(v, pd.Series) else pd.Series(v, index = fIndex(variableName, None, btype=btype), dtype= np.float64)
 
 def vIndexSeries(f,names):
 	return f.index.set_names(names) if len(names)==1 else pd.MultiIndex.from_tuples(f.index.values,names=names)
@@ -77,7 +77,7 @@ def stackValues(ite):
 	return np.hstack([f.values for f in ite])
 
 def stackIndex(ite,names):
-	return pd.MultiIndex.from_tuples(np.hstack([pydb.getIndex(f).values for f in ite]), names = names)
+	return pd.MultiIndex.from_tuples(np.hstack([pyDbs.getIndex(f).values for f in ite]), names = names)
 
 def stackSeries(ite, names):
 	return pd.Series(stackValues(ite), index = stackIndex(ite,names), dtype = np.float64)

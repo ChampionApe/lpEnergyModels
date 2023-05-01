@@ -1,4 +1,4 @@
-import numpy as np, pandas as pd, pydb
+import numpy as np, pandas as pd, pyDbs
 from collections.abc import Iterable
 from six import string_types
 from scipy import sparse
@@ -24,7 +24,7 @@ def sortAll(v, order=None):
 	return reorderStd(v, order=order).sort_index() if isinstance(v, (pd.Series, pd.DataFrame)) else v
 
 def reorderStd(v, order=None):
-	return v.reorder_levels(noneInit(order, sorted(pydb.getIndex(v).names))) if isinstance(pydb.getIndex(v), pd.MultiIndex) else v
+	return v.reorder_levels(noneInit(order, sorted(pyDbs.getIndex(v).names))) if isinstance(pyDbs.getIndex(v), pd.MultiIndex) else v
 
 def setattrReturn(symbol,k,v):
 	symbol.__setattr__(k,v)
@@ -37,7 +37,7 @@ def fIndex(variableName, index, btype = 'v'):
 	return setattrReturn(pd.MultiIndex.from_tuples([(variableName,None)], names = stdNames(btype)), '_n', []) if index is None else fIndexSeries(variableName,index, btype = btype)
 
 def fIndexVariable(variableName, v, btype = 'v'):
-	return v.set_axis(fIndex(variableName, pydb.getIndex(v), btype = btype))
+	return v.set_axis(fIndex(variableName, pyDbs.getIndex(v), btype = btype))
 
 def vIndexSeries(f,names):
 	return f.index.set_names(names) if len(names)==1 else pd.MultiIndex.from_tuples(f.index.values,names=names)
@@ -61,23 +61,23 @@ def sparseEmptySeries(size, fill_value=0, index = None, name = None):
 
 def sparseBroadcast(x,y, fill_value=0):
 	""" y is an index or None, x is a scalar or series. Assumes input types are sparse. """
-	if pydb.getDomains(y):
-		if not pydb.getDomains(x):
-			return sparseSeries(x, index = pydb.getIndex(y), fill_value = fill_value)
-		elif set(pydb.getDomains(x)).intersection(set(pydb.getDomains(y))):
-			return x.add(sparseSeries(0, index = pydb.getIndex(y)), fill_value = fill_value)
+	if pyDbs.getDomains(y):
+		if not pyDbs.getDomains(x):
+			return sparseSeries(x, index = pyDbs.getIndex(y), fill_value = fill_value)
+		elif set(pyDbs.getDomains(x)).intersection(set(pyDbs.getDomains(y))):
+			return x.add(sparseSeries(0, index = pyDbs.getIndex(y)), fill_value = fill_value)
 		else:
-			return sparseSeries(0, index = pydb.cartesianProductIndex([pydb.getIndex(x), pydb.getIndex(y)])).add(x, fill_value=fill_value)
+			return sparseSeries(0, index = pyDbs.cartesianProductIndex([pyDbs.getIndex(x), pyDbs.getIndex(y)])).add(x, fill_value=fill_value)
 	else:
 		return x
 
 def sparseAdd(x,y,fill_value=0):
 	""" y and x are variables defined as scalars or pd.Series. Assumes input types are sparse. 
 		NOTE: We cannot simply use the pandas function .add with option fill_value, because sparseArrays does not support assignment via setitem """
-	if pydb.getDomains(y):
-		if not pydb.getDomains(x):
+	if pyDbs.getDomains(y):
+		if not pyDbs.getDomains(x):
 			return y+x
-		# elif set(pydb.getDomains(x)).intersection(set(pydb.getDomains(y))):
+		# elif set(pyDbs.getDomains(x)).intersection(set(pyDbs.getDomains(y))):
 		# 	return x.add(y, fill_value = fill_value)
 		else:
 			return sparseBroadcast(x, y)+sparseBroadcast(y,x)
@@ -86,10 +86,10 @@ def sparseAdd(x,y,fill_value=0):
 
 def sparseMult(x,y, fill_value=0):
 	""" y and x are variables defined as scalars or pd.Series. Assumes input types are sparse. """
-	if pydb.getDomains(y):
-		if not pydb.getDomains(x):
+	if pyDbs.getDomains(y):
+		if not pyDbs.getDomains(x):
 			return y*x
-		# elif set(pydb.getDomains(x)).intersection(set(pydb.getDomains(y))):
+		# elif set(pyDbs.getDomains(x)).intersection(set(pyDbs.getDomains(y))):
 		# 	return x.multiply(y, fill_value = fill_value)
 		else:
 			return sparseBroadcast(x, y)*sparseBroadcast(y,x)
