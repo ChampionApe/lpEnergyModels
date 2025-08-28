@@ -1,0 +1,15 @@
+name: lpEnergyModels
+channels:
+  - defaults
+dependencies:
+  - python >= 3.12
+  - pip
+  - nodejs
+  - jupyterlab = 4
+  - pandas = 2.3
+  - scipy = 1.16
+  - openpyxl
+  - matplotlib = 3.10
+  - pip:
+    - pyDbs >= 0.1.6
+    - symMaps >= 0.0.2
