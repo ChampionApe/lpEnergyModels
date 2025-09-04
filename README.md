@@ -11,3 +11,6 @@ The models require installation of Python (e.g. through Anaconda), some type of 
 * Install virtual environment writing: ```conda env create -f virtualEnv.yml``` (You have to press ```y+enter``` to proceed afterwards).
 
 This sets up a virtual environment on your computer called ```lpEnergyModels```; this is a specific copy of your Python installation that has specific package versions.
+
+## Copilot agent
+The repository is set up with default instructions for a Github Copilot that will help you interact with code, adjust data, and develop model extensions. 
