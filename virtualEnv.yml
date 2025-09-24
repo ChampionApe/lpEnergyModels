@@ -11,5 +11,6 @@ dependencies:
   - openpyxl
   - matplotlib = 3.10
   - pip:
-    - pyDbs >= 0.1.7
-    - symMaps >= 0.0.3
+    - pyDbs >= 0.1.8
+    - symMaps >= 0.0.4
+    - seaborn == 0.13.2

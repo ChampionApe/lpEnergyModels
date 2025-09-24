@@ -16,7 +16,7 @@ def plantEmissionIntensity(uFuel, uEm):
 def mcHr(uFuel, VOM, pFuel, uEm, taxEm, idxHr):
 	return Broadcast.seriesToIdx(mc(uFuel, VOM, pFuel, uEm, taxEm), idxHr)
 
-def fuelConsumption(generation, uFuel, scale, sumOver = ['idxGen','idxH']):
+def fuelConsumption(generation, uFuel, scale, sumOver = ['idxGen','idxHr']):
 	""" Yearly fuel consumption in GJ across 'idxF'. scale maps to yearly levels. For instance, a model featuring 24 hours uses scale = 8760/24. """
 	return scale * pdSum((generation * uFuel).dropna(), sumOver)
 
@@ -105,8 +105,8 @@ class MBasicInt(ModelShell):
 		return self.sys.out
 
 	def initArgsV_generation(self):
-		self.sys.lp['c'][('mc', 'generation')] = self.db('mcHr') # assumes that mc is defined over index 'idxGen'.
-		self.sys.lp['u'][('genCap', 'generation')] = self.db('genCapHr') # assumes that genCap is defined over index 'idxGen'.
+		self.sys.lp['c'][('mc', 'generation')] = self.db('mcHr') # assumes that mcHr is defined over index ('idxHr','idxGen')
+		self.sys.lp['u'][('genCap', 'generation')] = self.db('genCapHr') # assumes that genCapHr is defined over index ('idxHr','idxGen')
 
 	def initArgsV_demand(self):
 		self.sys.lp['c'][('mwp', 'demand')] = reorder(-Broadcast.seriesToIdx(self.db('mwp'), self.sys.v['demand']), order = self.sys.v['demand'].names)

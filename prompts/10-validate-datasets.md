@@ -14,7 +14,7 @@
    - All `idxCons` mapped in `idxCons2HVTCons`.
 
 4) **Derived assertions (MBasicInt)**
-   - Build `hourly_demand = load × uHrLoad` and confirm dimensions and units (GJ/h).
+   - Build `loadHr = load × uHrLoad` and `genCapHr` and confirm dimensions and units (GJ/h).
    - Optionally plot hourly totals by consumer and capacity by generator.
 
 5) **Output**

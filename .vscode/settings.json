@@ -1,0 +1,5 @@
+{
+    "chat.instructionsFilesLocations": {
+        ".github/copilot-instructions": true
+    }
+}

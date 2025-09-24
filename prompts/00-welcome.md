@@ -1,5 +1,4 @@
-
-# MBasic / MBasicInt — Getting Started with Copilot Chat
+# Getting Started with Copilot Chat
 
 **You can ask me to:**
 - Validate the current Excel inputs and loader compatibility. 
